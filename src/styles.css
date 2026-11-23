@@ -46,7 +46,10 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Se
 .quick-search:focus { outline: none; border-color: var(--accent); }
 .local-note { font-size: 0.72rem; color: #a66300; }
 .local-note[hidden] { display: none; }
-.status { margin-left: auto; font-size: 0.8rem; color: var(--ink); font-weight: 600; max-width: 55%; text-align: right; }
+.meta { font-size: 0.82rem; color: var(--ink); font-weight: 600; white-space: nowrap; }
+.status { font-size: 0.78rem; color: #1a7f37; }
+/* search + action buttons pinned to the right of the toolbar */
+.toolbar .quick-search { margin-left: auto; }
 
 .btn { font: inherit; font-size: 0.85rem; padding: 0.4rem 0.75rem; border: 1px solid var(--line); background: #fff; border-radius: 6px; cursor: pointer; color: var(--ink); white-space: nowrap; }
 .btn:hover { background: #f4f6fb; border-color: #c9d4ef; }

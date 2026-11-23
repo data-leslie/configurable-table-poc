@@ -105,16 +105,20 @@
     var filterBar = el('div', { class: 'filterbar' });
     root.appendChild(filterBar);
     FILTERS.forEach(function (f) { filterBar.appendChild(makeFilter(f)); });
+    // Currency behaves like a filter, so it sits on the filter row (which wraps
+    // over as many rows as the dataset needs).
+    var curSelect = el('select', { class: 'cur-select' });
+    ['GBP', 'Local'].forEach(function (c) { var o = el('option', { value: c, text: c }); if (c === currency) o.setAttribute('selected', 'selected'); curSelect.appendChild(o); });
+    var curWrap = el('label', { class: 'cur-wrap filter-wrap' }, [el('span', { text: 'Currency' }), curSelect]);
+    filterBar.appendChild(curWrap);
     var clearAll = el('button', { class: 'linkbtn', type: 'button', text: 'Clear all filters' });
     clearAll.addEventListener('click', function () { active = {}; FILTERS.forEach(updateFilterButton); gridApi.onFilterChanged(); });
     filterBar.appendChild(clearAll);
     var years = valuesFor('Year', true); if (years.length) active['Year'] = new Set([years[0]]);
 
-    // toolbar
+    // action toolbar (count on the left; actions pinned to the right)
     var statusEl = el('span', { class: 'status' });
-    var curSelect = el('select', { class: 'cur-select' });
-    ['GBP', 'Local'].forEach(function (c) { var o = el('option', { value: c, text: c }); if (c === currency) o.setAttribute('selected', 'selected'); curSelect.appendChild(o); });
-    var curWrap = el('label', { class: 'cur-wrap' }, [el('span', { text: 'Currency' }), curSelect]);
+    var metaEl = el('div', { class: 'meta' });
 
     var colBtn = el('button', { class: 'btn', text: 'Columns ▾', type: 'button' });
     var colPanel = el('div', { class: 'menu', hidden: 'hidden' });
@@ -134,8 +138,7 @@
     var resetBtn = el('button', { class: 'btn', text: 'Reset', type: 'button' });
 
     root.appendChild(el('div', { class: 'toolbar' }, [
-      el('div', { class: 'meta', text: rows.length + ' rows' }),
-      searchInput, curWrap, colWrap, dlWrap, saveBtn, resetBtn, statusEl
+      metaEl, statusEl, searchInput, colWrap, dlWrap, saveBtn, resetBtn
     ]));
 
     // grid
@@ -150,7 +153,7 @@
       var label = vis.length ? vis[0].colId : 'Specialist';
       var pinned = { 'Total Price': filteredTotal() }; if (label !== 'Total Price') pinned[label] = 'Total';
       gridApi.setGridOption('pinnedBottomRowData', [pinned]);
-      statusEl.textContent = n + ' rows';
+      metaEl.textContent = (n === rows.length) ? (rows.length + ' Total rows') : ('Showing ' + n + ' of ' + rows.length + ' rows');
     }
 
     function colDefs() {
@@ -165,6 +168,8 @@
     gridApi = agGrid.createGrid(gridEl, {
       columnDefs: colDefs(), rowData: rows,
       defaultColDef: { sortable: true, filter: true, resizable: true },
+      // Size every column to fit its header + content so nothing truncates.
+      autoSizeStrategy: { type: 'fitCellContents' },
       suppressDragLeaveHidesColumns: true, enableCellTextSelection: true,
       getRowStyle: function (p) { if (p.node.rowPinned) return { fontWeight: '700' }; },
       isExternalFilterPresent: function () { return FILTERS.some(function (f) { return active[f] && active[f].size; }); },
