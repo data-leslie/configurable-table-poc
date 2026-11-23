@@ -122,18 +122,20 @@
 
     var dlBtn = el('button', { class: 'btn', text: 'Download ▾', type: 'button' });
     var dlPanel = el('div', { class: 'menu', hidden: 'hidden' });
-    var dlCsv = el('button', { class: 'menu-item', type: 'button', text: 'CSV (current view)' });
-    var dlPdf = el('button', { class: 'menu-item', type: 'button', text: 'PDF (all columns)' });
-    dlPanel.appendChild(dlCsv); dlPanel.appendChild(dlPdf);
+    var dlCsv = el('button', { class: 'menu-item', type: 'button', text: 'CSV' });
+    var dlXlsx = el('button', { class: 'menu-item', type: 'button', text: 'Excel (.xlsx)' });
+    var dlPdf = el('button', { class: 'menu-item', type: 'button', text: 'PDF' });
+    dlPanel.appendChild(dlCsv); dlPanel.appendChild(dlXlsx); dlPanel.appendChild(dlPdf);
     var dlWrap = el('div', { class: 'menu-wrap' }, [dlBtn, dlPanel]);
+
+    var searchInput = el('input', { class: 'quick-search', type: 'search', placeholder: 'Search table…', 'aria-label': 'Search table' });
 
     var saveBtn = el('button', { class: 'btn primary', text: 'Save view', type: 'button' });
     var resetBtn = el('button', { class: 'btn', text: 'Reset', type: 'button' });
-    var diagBtn = el('button', { class: 'btn', text: '⚙ Diagnostics', type: 'button' });
 
     root.appendChild(el('div', { class: 'toolbar' }, [
-      el('div', { class: 'meta', text: 'PoC · ' + rows.length + ' sample rows' }),
-      curWrap, colWrap, dlWrap, saveBtn, resetBtn, diagBtn, statusEl
+      el('div', { class: 'meta', text: rows.length + ' rows' }),
+      searchInput, curWrap, colWrap, dlWrap, saveBtn, resetBtn, statusEl
     ]));
 
     // grid
@@ -154,7 +156,7 @@
     function colDefs() {
       return COLS.map(function (c) {
         var d = { colId: c.colId, headerName: c.headerName, width: c.width };
-        if (c.totalPrice) { d.type = 'numericColumn'; d.filter = 'agNumberColumnFilter'; d.cellClass = 'bold-cell'; d.valueGetter = function (p) { if (p.node && p.node.rowPinned) return p.data ? p.data['Total Price'] : null; return p.data ? p.data[currencyField()] : null; }; d.valueFormatter = function (p) { return fmtMoney(p.value); }; }
+        if (c.totalPrice) { d.type = 'numericColumn'; d.filter = 'agNumberColumnFilter'; d.cellClass = 'bold-cell'; d.pinned = 'right'; d.valueGetter = function (p) { if (p.node && p.node.rowPinned) return p.data ? p.data['Total Price'] : null; return p.data ? p.data[currencyField()] : null; }; d.valueFormatter = function (p) { return fmtMoney(p.value); }; }
         else { d.field = c.field; if (c.yearSort) d.comparator = function (a, b) { return (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0); }; if (c.monthSort) d.comparator = function (a, b) { return (MONTHS[String(a).toLowerCase()] || 0) - (MONTHS[String(b).toLowerCase()] || 0); }; }
         return d;
       });
@@ -232,20 +234,23 @@
       recomputeTotals();
     }
 
-    // diagnostics (prove downloads + storage actually work self-hosted)
-    diagBtn.addEventListener('click', function () {
-      var back = el('div', { class: 'modal-backdrop' }), logEl = el('div', { class: 'diag-log' });
-      function log(m) { logEl.appendChild(el('div', { text: m })); }
-      log('origin: ' + location.origin);
-      log('isSecureContext: ' + window.isSecureContext);
-      log('localStorage: ' + (function () { try { localStorage.setItem('_t', '1'); localStorage.removeItem('_t'); return 'WORKS ✓'; } catch (e) { return 'BLOCKED: ' + e.message; } })());
-      log('showSaveFilePicker: ' + (typeof window.showSaveFilePicker));
-      var b = el('button', { class: 'btn primary', type: 'button', text: 'Test CSV download' });
-      b.addEventListener('click', function () { try { downloadBlob('diag.csv', 'a,b\r\n1,2\r\n', 'text/csv'); log('download triggered — check Downloads'); } catch (e) { log('download ERROR: ' + e.message); } });
-      var close = el('button', { class: 'btn', type: 'button', text: 'Close' });
-      close.addEventListener('click', function () { document.body.removeChild(back); });
-      back.appendChild(el('div', { class: 'modal' }, [el('div', { class: 'modal-head' }, [el('strong', { text: 'Diagnostics' })]), el('div', { class: 'modal-body' }, [el('div', { class: 'diag-btns' }, [b]), logEl]), el('div', { class: 'modal-foot' }, [close])]));
-      document.body.appendChild(back);
+    // Excel (.xlsx) download — real workbook, client-side (not sandboxed)
+    dlXlsx.addEventListener('click', function () {
+      dlPanel.setAttribute('hidden', 'hidden');
+      if (!window.XLSX) { statusEl.textContent = 'Excel library missing'; return; }
+      var v = currentView(true);
+      var aoa = [v.headers].concat(v.body).concat([v.total]);
+      var ws = XLSX.utils.aoa_to_sheet(aoa);
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Performance');
+      XLSX.writeFile(wb, 'Performance_' + currency + '.xlsx');
+      statusEl.textContent = 'Excel downloaded ✓';
+    });
+
+    // quick search across the whole table
+    searchInput.addEventListener('input', function () {
+      gridApi.setGridOption('quickFilterText', searchInput.value);
+      recomputeTotals();
     });
 
     // ---- filter dropdown ----

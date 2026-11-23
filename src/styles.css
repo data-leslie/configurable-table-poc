@@ -42,6 +42,8 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Se
 .meta { font-size: 0.8rem; color: var(--muted); }
 .cur-wrap { display: flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: var(--muted); }
 .cur-select { font: inherit; font-size: 0.85rem; padding: 0.3rem 0.4rem; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.quick-search { font: inherit; font-size: 0.85rem; padding: 0.4rem 0.6rem; border: 1px solid var(--line); border-radius: 6px; background: #fff; width: 200px; }
+.quick-search:focus { outline: none; border-color: var(--accent); }
 .local-note { font-size: 0.72rem; color: #a66300; }
 .local-note[hidden] { display: none; }
 .status { margin-left: auto; font-size: 0.8rem; color: var(--ink); font-weight: 600; max-width: 55%; text-align: right; }
