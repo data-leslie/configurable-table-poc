@@ -30,6 +30,26 @@
   }
   function fmtNum(v) { if (v == null || v === '') return ''; return (typeof v === 'number') ? numberFmt.format(Math.round(v)) : String(v); }
 
+  // --- configuration (set by an editor; stored in the workbook; read by all) --
+  function defaultConfig() { return { title: 'Configurable Table', subtitle: '', showHeader: true, labels: {} }; }
+  function loadConfig() {
+    var raw = null;
+    try { if (window.tableau && tableau.extensions && tableau.extensions.settings) raw = tableau.extensions.settings.get('tableConfig'); } catch (e) {}
+    if (raw == null) { try { raw = localStorage.getItem('cfgtbl-poc:config'); } catch (e) {} }
+    var cfg = defaultConfig();
+    if (raw) { try { var o = JSON.parse(raw); Object.keys(o).forEach(function (k) { cfg[k] = o[k]; }); } catch (e) {} }
+    if (!cfg.labels) cfg.labels = {};
+    return cfg;
+  }
+  function saveConfig(cfg) {
+    var raw = JSON.stringify(cfg), done = Promise.resolve();
+    try { if (window.tableau && tableau.extensions && tableau.extensions.settings && tableau.extensions.settings.saveAsync) { tableau.extensions.settings.set('tableConfig', raw); done = tableau.extensions.settings.saveAsync(); } } catch (e) {}
+    try { localStorage.setItem('cfgtbl-poc:config', raw); } catch (e) {}
+    return done;
+  }
+  // Configure is shown only to editors (authoring mode), or when previewed outside Tableau.
+  function showConfigure() { try { if (!(window.tableau && tableau.extensions && tableau.extensions.environment)) return true; return tableau.extensions.environment.mode === 'authoring'; } catch (e) { return true; } }
+
   // --- map Tableau summary data -> { columns:[{field,type}], rows:[{field:val}] }
   function mapType(dt) { dt = (dt || '').toLowerCase(); if (dt.indexOf('int') >= 0 || dt.indexOf('float') >= 0 || dt === 'number' || dt === 'real') return 'number'; if (dt.indexOf('date') >= 0) return 'date'; return 'string'; }
   function fromDataTable(dt) {
@@ -74,6 +94,7 @@
     var FILTERS = columns.filter(function (c) { return c.type !== 'number'; }).map(function (c) { return c.field; });
     var firstField = columns.length ? columns[0].field : '';
     var gridApi, active = {};
+    var config = loadConfig();
 
     function valuesFor(field, respectSelf) {
       var out = {};
@@ -84,11 +105,15 @@
       return Object.keys(out).sort(function (a, b) { var na = parseFloat(a), nb = parseFloat(b); if (!isNaN(na) && !isNaN(nb)) return na - nb; return a.localeCompare(b); });
     }
 
-    // header
-    root.appendChild(el('div', { class: 'appheader' }, [el('div', { class: 'brand-titles' }, [
-      el('h1', { text: 'Configurable Table' }),
-      el('div', { class: 'refreshed', text: 'Viz extension · ' + rows.length + ' rows · ' + new Date().toLocaleString() })
-    ])]));
+    // header (configurable: title, subtitle, or hidden entirely)
+    function renderHeader() {
+      var existing = root.querySelector('.appheader'); if (existing) existing.parentNode.removeChild(existing);
+      if (!config.showHeader) return;
+      var kids = [el('h1', { text: config.title || 'Table' })];
+      if (config.subtitle) kids.push(el('div', { class: 'refreshed', text: config.subtitle }));
+      root.insertBefore(el('div', { class: 'appheader' }, [el('div', { class: 'brand-titles' }, kids)]), root.firstChild);
+    }
+    renderHeader();
 
     // filter bar (one per dimension; wraps over rows)
     var filterBar = el('div', { class: 'filterbar' });
@@ -114,7 +139,44 @@
     var dlWrap = el('div', { class: 'menu-wrap' }, [dlBtn, dlPanel]);
     var saveBtn = el('button', { class: 'btn primary', text: 'Save view', type: 'button' });
     var resetBtn = el('button', { class: 'btn', text: 'Reset', type: 'button' });
-    root.appendChild(el('div', { class: 'toolbar' }, [metaEl, statusEl, searchInput, colWrap, dlWrap, saveBtn, resetBtn]));
+    var toolbarKids = [metaEl, statusEl, searchInput, colWrap, dlWrap, saveBtn, resetBtn];
+    if (showConfigure()) { var configBtn = el('button', { class: 'btn', type: 'button', text: '⚙ Configure' }); configBtn.addEventListener('click', openConfigure); toolbarKids.push(configBtn); }
+    root.appendChild(el('div', { class: 'toolbar' }, toolbarKids));
+
+    function applyConfig() { renderHeader(); if (gridApi) gridApi.setGridOption('columnDefs', colDefs()); }
+    function openConfigure() {
+      var backdrop = el('div', { class: 'modal-backdrop' });
+      var titleIn = el('input', { type: 'text', class: 'cfg-input' }); titleIn.value = config.title || '';
+      var subIn = el('input', { type: 'text', class: 'cfg-input' }); subIn.value = config.subtitle || '';
+      var showHdr = el('input', { type: 'checkbox' }); if (config.showHeader) showHdr.checked = true;
+      var labelInputs = {};
+      var colList = el('div', { class: 'cfg-cols' });
+      columns.forEach(function (c) {
+        var inp = el('input', { type: 'text', class: 'cfg-input', placeholder: c.field }); inp.value = config.labels[c.field] || '';
+        labelInputs[c.field] = inp;
+        colList.appendChild(el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: c.field }), inp]));
+      });
+      var saveB = el('button', { class: 'btn primary', type: 'button', text: 'Save' });
+      var cancelB = el('button', { class: 'btn', type: 'button', text: 'Cancel' });
+      saveB.addEventListener('click', function () {
+        config.title = titleIn.value; config.subtitle = subIn.value; config.showHeader = !!showHdr.checked;
+        config.labels = {}; Object.keys(labelInputs).forEach(function (f) { var v = labelInputs[f].value.trim(); if (v) config.labels[f] = v; });
+        saveConfig(config); applyConfig(); statusEl.textContent = 'Configuration saved ✓'; document.body.removeChild(backdrop);
+      });
+      cancelB.addEventListener('click', function () { document.body.removeChild(backdrop); });
+      backdrop.appendChild(el('div', { class: 'modal cfg-modal' }, [
+        el('div', { class: 'modal-head' }, [el('strong', { text: 'Configure table' })]),
+        el('div', { class: 'modal-body' }, [
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Title' }), titleIn]),
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Subtitle' }), subIn]),
+          el('label', { class: 'cfg-row cfg-check' }, [showHdr, el('span', { text: 'Show header (title + subtitle)' })]),
+          el('div', { class: 'cfg-sec', text: 'Column labels (blank = use the field name)' }),
+          colList
+        ]),
+        el('div', { class: 'modal-foot' }, [cancelB, saveB])
+      ]));
+      document.body.appendChild(backdrop);
+    }
 
     // grid
     var gridEl = el('div', { class: 'grid ag-theme-quartz' });
@@ -122,7 +184,7 @@
 
     function colDefs() {
       return columns.map(function (c) {
-        var d = { colId: c.field, headerName: c.field, field: c.field };
+        var d = { colId: c.field, headerName: config.labels[c.field] || c.field, field: c.field };
         if (c.type === 'number') { d.type = 'numericColumn'; d.filter = 'agNumberColumnFilter'; d.cellClass = 'bold-cell'; d.valueFormatter = function (p) { return fmtNum(p.value); }; }
         return d;
       });
