@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest manifest-version="0.1" xmlns="http://www.tableau.com/xml/extension_manifest">
-  <dashboard-extension id="com.oceanoutdoor.configurable-table-poc" extension-version="0.1.0">
+  <worksheet-extension id="com.oceanoutdoor.configurable-table-poc" extension-version="0.2.0">
     <default-locale>en_US</default-locale>
     <name resource-id="name" />
-    <description>Configurable Table — network-enabled PoC (downloads + saved layouts).</description>
+    <description>Configurable Table — network-enabled viz extension (reads this worksheet's fields).</description>
     <author name="Ocean Outdoor" email="noreply@oceanoutdoor.com" organization="Ocean Outdoor" website="https://www.oceanoutdoor.com" />
-    <min-api-version>1.4</min-api-version>
+    <min-api-version>1.12</min-api-version>
     <source-location>
       <url>https://data-leslie.github.io/configurable-table-poc/index.html</url>
     </source-location>
@@ -13,7 +13,18 @@
     <permissions>
       <permission>full data</permission>
     </permissions>
-  </dashboard-extension>
+    <encoding id="field">
+      <display-name>Columns</display-name>
+      <role-spec>
+        <role-type>discrete-dimension</role-type>
+        <role-type>discrete-measure</role-type>
+        <role-type>continuous-dimension</role-type>
+        <role-type>continuous-measure</role-type>
+      </role-spec>
+      <fields max-count="50" />
+      <encoding-icon token="level" />
+    </encoding>
+  </worksheet-extension>
   <resources>
     <resource id="name">
       <text locale="en_US">Configurable Table PoC</text>
