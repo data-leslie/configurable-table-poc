@@ -29,6 +29,7 @@
     setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1000);
   }
   function fmtNum(v) { if (v == null || v === '') return ''; return (typeof v === 'number') ? numberFmt.format(Math.round(v)) : String(v); }
+  function renderError(msg) { root.textContent = ''; root.appendChild(el('div', { class: 'error', text: msg })); }
 
   // --- configuration (set by an editor; stored in the workbook; read by all) --
   function defaultConfig() { return { title: 'Configurable Table', subtitle: '', showHeader: true, labels: {} }; }
@@ -309,21 +310,20 @@
   }
   function boot() {
     if (!window.agGrid) { root.textContent = 'Grid library failed to load.'; return; }
-    var started = false;
-    function start(m) { if (started) return; started = true; build(m); }
-    try {
-      if (window.tableau && tableau.extensions && tableau.extensions.initializeAsync) {
-        tableau.extensions.initializeAsync().then(function () {
-          var ws = tableau.extensions.worksheetContent && tableau.extensions.worksheetContent.worksheet;
-          if (!ws || !ws.getSummaryDataReaderAsync) { start(sampleModel()); return; }
-          readWorksheet(ws).then(function (m) {
-            start(m);
-            try { ws.addEventListener(tableau.TableauEventType.SummaryDataChanged, function () { readWorksheet(ws).then(function (m2) { if (CURRENT.setData) CURRENT.setData(m2); }); }); } catch (e) {}
-          }).catch(function () { start(sampleModel()); });
-        }).catch(function () { start(sampleModel()); });
-        setTimeout(function () { start(sampleModel()); }, 6000); // safety net
-      } else { start(sampleModel()); }
-    } catch (e) { start(sampleModel()); }
+    var inTableau = !!(window.tableau && tableau.extensions && tableau.extensions.initializeAsync);
+    // Outside Tableau (raw page preview) show fictional sample data.
+    if (!inTableau) { build(sampleModel()); return; }
+    tableau.extensions.initializeAsync().then(function () {
+      var ws = tableau.extensions.worksheetContent && tableau.extensions.worksheetContent.worksheet;
+      if (!ws || !ws.getSummaryDataReaderAsync) { renderError('Add this extension to a worksheet that has fields on it.'); return; }
+      readWorksheet(ws).then(function (m) {
+        build(m);
+        try { ws.addEventListener(tableau.TableauEventType.SummaryDataChanged, function () { readWorksheet(ws).then(function (m2) { if (CURRENT.setData) CURRENT.setData(m2); }); }); } catch (e) {}
+      }).catch(function (err) {
+        // In Tableau: DON'T show fake data — surface the real reason (usually permissions).
+        renderError('Could not read this worksheet’s data for the signed-in user. This is almost always a data-access permission: grant the viewer "Download Full Data" on the workbook and "Connect" on the data source. (' + ((err && err.message) || err) + ')');
+      });
+    }).catch(function (err) { renderError('Extension failed to initialize: ' + ((err && err.message) || err)); });
   }
   boot();
 })();
