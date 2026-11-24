@@ -225,7 +225,7 @@
       gridApi.getColumnState().forEach(function (c) {
         var cb = el('input', { type: 'checkbox' }); cb.checked = !c.hide;
         cb.addEventListener('change', function () { gridApi.applyColumnState({ state: [{ colId: c.colId, hide: !cb.checked }] }); recompute(); });
-        colPanel.appendChild(el('label', { class: 'menu-check' }, [cb, el('span', { text: c.colId })]));
+        colPanel.appendChild(el('label', { class: 'menu-check' }, [cb, el('span', { text: config.labels[c.colId] || c.colId })]));
       });
     }
     colBtn.addEventListener('click', function (ev) { ev.stopPropagation(); var open = colPanel.hasAttribute('hidden'); closeAllMenus(); if (open) { rebuildCols(); colPanel.removeAttribute('hidden'); } });
