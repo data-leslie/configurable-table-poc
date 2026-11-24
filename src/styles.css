@@ -94,6 +94,15 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Se
 .cfg-sec { font-weight: 600; font-size: 0.82rem; margin: 0.7rem 0 0.3rem; }
 .cfg-cols { max-height: 38vh; overflow: auto; border-top: 1px solid var(--line); padding-top: 0.3rem; }
 .cfg-swatch { width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 5px; flex: 0 0 auto; }
+.cfg-modal { width: min(820px, 96vw); }
+.cfg-colrow { display: grid; grid-template-columns: 1.3fr 1.3fr 92px 48px 1.4fr; gap: 0.4rem; align-items: center; padding: 0.22rem 0; }
+.cfg-colrow.cfg-colhead { font-weight: 600; font-size: 0.72rem; color: var(--muted); position: sticky; top: 0; background: #fff; }
+.cfg-colrow .cfg-input { min-width: 0; }
+.cfg-fieldname { font-size: 0.78rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* header text alignment driven by per-column config */
+.ag-header-cell.hdr-right .ag-header-cell-label { justify-content: flex-end; }
+.ag-header-cell.hdr-center .ag-header-cell-label { justify-content: center; }
+.ag-header-cell.hdr-left .ag-header-cell-label { justify-content: flex-start; }
 
 /* print view */
 .print-root { position: fixed; inset: 0; background: #fff; z-index: 1000; display: flex; flex-direction: column; }

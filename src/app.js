@@ -32,15 +32,23 @@
   function renderError(msg) { root.textContent = ''; root.appendChild(el('div', { class: 'error', text: msg })); }
 
   // --- configuration (set by an editor; stored in the workbook; read by all) --
-  function defaultConfig() { return { title: 'Configurable Table', subtitle: '', showHeader: true, labels: {} }; }
+  function defaultConfig() { return { title: 'Configurable Table', subtitle: '', showHeader: true, bgColor: '', labels: {}, density: 'standard', zebra: true, zebraColor: '', align: {}, wrap: {}, numFmt: {} }; }
   function loadConfig() {
     var raw = null;
     try { if (window.tableau && tableau.extensions && tableau.extensions.settings) raw = tableau.extensions.settings.get('tableConfig'); } catch (e) {}
     if (raw == null) { try { raw = localStorage.getItem('cfgtbl-poc:config'); } catch (e) {} }
     var cfg = defaultConfig();
     if (raw) { try { var o = JSON.parse(raw); Object.keys(o).forEach(function (k) { cfg[k] = o[k]; }); } catch (e) {} }
-    if (!cfg.labels) cfg.labels = {};
+    ['labels', 'align', 'wrap', 'numFmt'].forEach(function (k) { if (!cfg[k] || typeof cfg[k] !== 'object') cfg[k] = {}; });
     return cfg;
+  }
+  // Format a number with an Excel-style format string (via SheetJS SSF), e.g. "£"#,##0.00;-"£"#,##0.00
+  function fmtMeasure(cfg, field, v) {
+    if (v == null || v === '') return '';
+    if (typeof v !== 'number') return String(v);
+    var f = cfg.numFmt && cfg.numFmt[field];
+    if (f && window.XLSX && XLSX.SSF) { try { return XLSX.SSF.format(f.replace(/\[[A-Za-z]+\]/g, ''), v); } catch (e) {} }
+    return new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 }).format(Math.round(v));
   }
   function saveConfig(cfg) {
     var raw = JSON.stringify(cfg), done = Promise.resolve();
@@ -146,7 +154,9 @@
     root.appendChild(el('div', { class: 'toolbar' }, toolbarKids));
 
     function applyBackground() { var c = config.bgColor || ''; root.style.background = c; var fb = root.querySelector('.filterbar'); if (fb) fb.style.background = c; var tb = root.querySelector('.toolbar'); if (tb) tb.style.background = c; }
-    function applyConfig() { renderHeader(); applyBackground(); FILTERS.forEach(updateFilterButton); if (gridApi) gridApi.setGridOption('columnDefs', colDefs()); }
+    function applyDensity() { if (!gridApi) return; var h = config.density === 'compact' ? 28 : config.density === 'comfortable' ? 50 : 40; gridApi.setGridOption('rowHeight', h); gridApi.setGridOption('headerHeight', h); if (gridApi.resetRowHeights) gridApi.resetRowHeights(); }
+    function applyZebra() { if (!config.zebra) gridEl.style.setProperty('--ag-odd-row-background-color', 'transparent'); else if (config.zebraColor) gridEl.style.setProperty('--ag-odd-row-background-color', config.zebraColor); else gridEl.style.removeProperty('--ag-odd-row-background-color'); }
+    function applyConfig() { renderHeader(); applyBackground(); applyDensity(); applyZebra(); FILTERS.forEach(updateFilterButton); if (gridApi) gridApi.setGridOption('columnDefs', colDefs()); }
     function openConfigure() {
       var backdrop = el('div', { class: 'modal-backdrop' });
       var titleIn = el('input', { type: 'text', class: 'cfg-input' }); titleIn.value = config.title || '';
@@ -156,18 +166,35 @@
       var bgSwatch = el('span', { class: 'cfg-swatch' });
       function updSwatch() { bgSwatch.style.background = (bgIn.value.trim() || '#ffffff'); }
       bgIn.addEventListener('input', updSwatch); updSwatch();
-      var labelInputs = {};
+      var densitySel = el('select', { class: 'cfg-input' }); [['standard', 'Standard'], ['compact', 'Compact'], ['comfortable', 'Comfortable']].forEach(function (o) { var op = el('option', { value: o[0], text: o[1] }); if (config.density === o[0]) op.setAttribute('selected', 'selected'); densitySel.appendChild(op); });
+      var zebraChk = el('input', { type: 'checkbox' }); if (config.zebra) zebraChk.checked = true;
+      var zebraIn = el('input', { type: 'text', class: 'cfg-input', placeholder: '#f6f8fb (optional)' }); zebraIn.value = config.zebraColor || '';
+      var zebraSw = el('span', { class: 'cfg-swatch' }); function updZ() { zebraSw.style.background = (zebraIn.value.trim() || '#f6f8fb'); } zebraIn.addEventListener('input', updZ); updZ();
+
+      var labelInputs = {}, alignSel = {}, wrapChk = {}, fmtIn = {};
       var colList = el('div', { class: 'cfg-cols' });
+      colList.appendChild(el('div', { class: 'cfg-colrow cfg-colhead' }, [el('span', { text: 'Field' }), el('span', { text: 'Label' }), el('span', { text: 'Align' }), el('span', { text: 'Wrap' }), el('span', { text: 'Number format' })]));
       columns.forEach(function (c) {
-        var inp = el('input', { type: 'text', class: 'cfg-input', placeholder: c.field }); inp.value = config.labels[c.field] || '';
-        labelInputs[c.field] = inp;
-        colList.appendChild(el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: c.field }), inp]));
+        var isMeas = measures.indexOf(c.field) >= 0;
+        var lab = el('input', { type: 'text', class: 'cfg-input', placeholder: c.field }); lab.value = config.labels[c.field] || ''; labelInputs[c.field] = lab;
+        var al = el('select', { class: 'cfg-input' }); [['', 'Auto'], ['left', 'Left'], ['center', 'Centre'], ['right', 'Right']].forEach(function (o) { var op = el('option', { value: o[0], text: o[1] }); if ((config.align[c.field] || '') === o[0]) op.setAttribute('selected', 'selected'); al.appendChild(op); }); alignSel[c.field] = al;
+        var wr = el('input', { type: 'checkbox' }); if (config.wrap[c.field]) wr.checked = true; wrapChk[c.field] = wr;
+        var fm = el('input', { type: 'text', class: 'cfg-input', placeholder: isMeas ? '#,##0.00' : '' }); fm.value = config.numFmt[c.field] || ''; if (!isMeas) fm.disabled = true; fmtIn[c.field] = fm;
+        colList.appendChild(el('div', { class: 'cfg-colrow' }, [el('span', { class: 'cfg-fieldname', text: c.field }), lab, al, wr, fm]));
       });
       var saveB = el('button', { class: 'btn primary', type: 'button', text: 'Save' });
       var cancelB = el('button', { class: 'btn', type: 'button', text: 'Cancel' });
       saveB.addEventListener('click', function () {
         config.title = titleIn.value; config.subtitle = subIn.value; config.showHeader = !!showHdr.checked; config.bgColor = bgIn.value.trim();
-        config.labels = {}; Object.keys(labelInputs).forEach(function (f) { var v = labelInputs[f].value.trim(); if (v) config.labels[f] = v; });
+        config.density = densitySel.value; config.zebra = !!zebraChk.checked; config.zebraColor = zebraIn.value.trim();
+        config.labels = {}; config.align = {}; config.wrap = {}; config.numFmt = {};
+        columns.forEach(function (c) {
+          var f = c.field;
+          var lv = labelInputs[f].value.trim(); if (lv) config.labels[f] = lv;
+          var av = alignSel[f].value; if (av) config.align[f] = av;
+          if (wrapChk[f].checked) config.wrap[f] = true;
+          var fv = fmtIn[f].value.trim(); if (fv) config.numFmt[f] = fv;
+        });
         saveConfig(config); applyConfig(); statusEl.textContent = 'Configuration saved ✓'; document.body.removeChild(backdrop);
       });
       cancelB.addEventListener('click', function () { document.body.removeChild(backdrop); });
@@ -178,7 +205,10 @@
           el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Subtitle' }), subIn]),
           el('label', { class: 'cfg-row cfg-check' }, [showHdr, el('span', { text: 'Show header (title + subtitle)' })]),
           el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Background colour' }), bgIn, bgSwatch]),
-          el('div', { class: 'cfg-sec', text: 'Column labels (blank = use the field name)' }),
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Row density' }), densitySel]),
+          el('label', { class: 'cfg-row cfg-check' }, [zebraChk, el('span', { text: 'Zebra striping' })]),
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Zebra colour' }), zebraIn, zebraSw]),
+          el('div', { class: 'cfg-sec', text: 'Columns (format strings like "£"#,##0.00;[Red]-"£"#,##0.00)' }),
           colList
         ]),
         el('div', { class: 'modal-foot' }, [cancelB, saveB])
@@ -192,8 +222,17 @@
 
     function colDefs() {
       return columns.map(function (c) {
-        var d = { colId: c.field, headerName: config.labels[c.field] || c.field, field: c.field };
-        if (c.type === 'number') { d.type = 'numericColumn'; d.filter = 'agNumberColumnFilter'; d.cellClass = 'bold-cell'; d.valueFormatter = function (p) { return fmtNum(p.value); }; }
+        var field = c.field, isMeas = measures.indexOf(field) >= 0;
+        var align = config.align[field] || (isMeas ? 'right' : 'left');
+        var wrap = !!config.wrap[field];
+        var d = { colId: field, headerName: labelFor(field), field: field, wrapText: wrap, autoHeight: wrap, headerClass: 'hdr-' + align };
+        if (isMeas) { d.type = 'numericColumn'; d.filter = 'agNumberColumnFilter'; d.valueFormatter = function (p) { return fmtMeasure(config, field, p.value); }; }
+        d.cellStyle = function (p) {
+          var st = { textAlign: align, whiteSpace: wrap ? 'normal' : 'nowrap' };
+          if (p.node && p.node.rowPinned) st.fontWeight = '700';
+          if (isMeas) { var f = config.numFmt[field]; if (f && /\[red\]/i.test(f) && typeof p.value === 'number' && p.value < 0) st.color = '#b00020'; }
+          return st;
+        };
         return d;
       });
     }
@@ -245,9 +284,9 @@
       var sums = {}; measures.forEach(function (m) { sums[m] = 0; });
       var body = [];
       gridApi.forEachNodeAfterFilter(function (node) {
-        body.push(cols.map(function (c) { var v = node.data[c.colId]; if (measures.indexOf(c.colId) >= 0) { if (typeof v === 'number') sums[c.colId] += v; return raw ? (v == null ? '' : v) : fmtNum(v); } return norm(v); }));
+        body.push(cols.map(function (c) { var v = node.data[c.colId]; if (measures.indexOf(c.colId) >= 0) { if (typeof v === 'number') sums[c.colId] += v; return raw ? (v == null ? '' : v) : fmtMeasure(config, c.colId, v); } return norm(v); }));
       });
-      var total = cols.map(function (c, i) { if (measures.indexOf(c.colId) >= 0) return raw ? sums[c.colId] : fmtNum(sums[c.colId]); return i === 0 ? 'Total' : ''; });
+      var total = cols.map(function (c, i) { if (measures.indexOf(c.colId) >= 0) return raw ? sums[c.colId] : fmtMeasure(config, c.colId, sums[c.colId]); return i === 0 ? 'Total' : ''; });
       return { headers: headers, body: body, total: total, numeric: numeric };
     }
     dlCsv.addEventListener('click', function () {
@@ -304,7 +343,7 @@
     function updateFilterButton(field) { filterBar.querySelectorAll('.filterbtn').forEach(function (b) { if (b._field === field) updateBtn(b, field, active[field] ? active[field].size : 0); }); }
     function updateBtn(btn, field, count) { btn._field = field; btn.textContent = labelFor(field) + (count ? ' (' + count + ') ▾' : ' ▾'); btn.className = 'filterbtn' + (count ? ' on' : ''); }
 
-    applyBackground();
+    applyBackground(); applyDensity(); applyZebra();
     recompute();
   }
 
@@ -327,9 +366,9 @@
       readWorksheet(ws).then(function (m) {
         build(m);
         try { ws.addEventListener(tableau.TableauEventType.SummaryDataChanged, function () { readWorksheet(ws).then(function (m2) { if (CURRENT.setData) CURRENT.setData(m2); }); }); } catch (e) {}
-      }).catch(function (err) {
-        // In Tableau: DON'T show fake data — surface the real reason (usually permissions).
-        renderError('Could not read this worksheet’s data for the signed-in user. This is almost always a data-access permission: grant the viewer "Download Full Data" on the workbook and "Connect" on the data source. (' + ((err && err.message) || err) + ')');
+      }).catch(function () {
+        // In Tableau: DON'T show fake data — show a friendly request-access message.
+        renderError('You don’t currently have permission to view this table. Please request access to this dashboard and its data source from your Tableau administrator, then reload.');
       });
     }).catch(function (err) { renderError('Extension failed to initialize: ' + ((err && err.message) || err)); });
   }
