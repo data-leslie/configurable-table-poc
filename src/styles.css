@@ -94,11 +94,17 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Se
 .cfg-sec { font-weight: 600; font-size: 0.82rem; margin: 0.7rem 0 0.3rem; }
 .cfg-cols { max-height: 38vh; overflow: auto; border-top: 1px solid var(--line); padding-top: 0.3rem; }
 .cfg-swatch { width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 5px; flex: 0 0 auto; }
-.cfg-modal { width: min(820px, 96vw); }
+.cfg-modal { width: min(920px, 96vw); }
 .cfg-colrow { display: grid; grid-template-columns: 1.3fr 1.3fr 92px 48px 1.4fr; gap: 0.4rem; align-items: center; padding: 0.22rem 0; }
+.cfg-colrow.cfg-colrow8 { grid-template-columns: 42px 44px 1.2fr 1.2fr 86px 44px 78px 1.3fr; }
 .cfg-colrow.cfg-colhead { font-weight: 600; font-size: 0.72rem; color: var(--muted); position: sticky; top: 0; background: #fff; }
 .cfg-colrow .cfg-input { min-width: 0; }
 .cfg-fieldname { font-size: 0.78rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-ordwrap { display: flex; gap: 2px; }
+.cfg-ord { font: inherit; font-size: 0.8rem; line-height: 1; padding: 2px 5px; border: 1px solid var(--line); background: #fff; border-radius: 4px; cursor: pointer; color: var(--ink); }
+.cfg-ord:hover { background: #f4f6fb; border-color: #c9d4ef; }
+.cfg-measchk { flex: 1; display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; }
+.cfg-measitem { display: flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; }
 /* header text alignment driven by per-column config */
 .ag-header-cell.hdr-right .ag-header-cell-label { justify-content: flex-end; }
 .ag-header-cell.hdr-center .ag-header-cell-label { justify-content: center; }

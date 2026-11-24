@@ -32,14 +32,16 @@
   function renderError(msg) { root.textContent = ''; root.appendChild(el('div', { class: 'error', text: msg })); }
 
   // --- configuration (set by an editor; stored in the workbook; read by all) --
-  function defaultConfig() { return { title: 'Configurable Table', subtitle: '', showHeader: true, bgColor: '', labels: {}, density: 'standard', zebra: true, zebraColor: '', align: {}, wrap: {}, numFmt: {} }; }
+  function defaultConfig() { return { title: 'Configurable Table', subtitle: '', showHeader: true, bgColor: '', labels: {}, density: 'standard', zebra: true, zebraColor: '', align: {}, wrap: {}, numFmt: {}, order: [], hidden: {}, pin: {}, sortField: '', sortDir: 'asc', totals: { enabled: true, measures: null, bold: true, position: 'bottom', label: 'Total' } }; }
   function loadConfig() {
     var raw = null;
     try { if (window.tableau && tableau.extensions && tableau.extensions.settings) raw = tableau.extensions.settings.get('tableConfig'); } catch (e) {}
     if (raw == null) { try { raw = localStorage.getItem('cfgtbl-poc:config'); } catch (e) {} }
     var cfg = defaultConfig();
     if (raw) { try { var o = JSON.parse(raw); Object.keys(o).forEach(function (k) { cfg[k] = o[k]; }); } catch (e) {} }
-    ['labels', 'align', 'wrap', 'numFmt'].forEach(function (k) { if (!cfg[k] || typeof cfg[k] !== 'object') cfg[k] = {}; });
+    ['labels', 'align', 'wrap', 'numFmt', 'hidden', 'pin'].forEach(function (k) { if (!cfg[k] || typeof cfg[k] !== 'object') cfg[k] = {}; });
+    if (!Array.isArray(cfg.order)) cfg.order = [];
+    if (!cfg.totals || typeof cfg.totals !== 'object') cfg.totals = defaultConfig().totals;
     return cfg;
   }
   // Format a number with an Excel-style format string (via SheetJS SSF), e.g. "£"#,##0.00;-"£"#,##0.00
@@ -156,7 +158,15 @@
     function applyBackground() { var c = config.bgColor || ''; root.style.background = c; var fb = root.querySelector('.filterbar'); if (fb) fb.style.background = c; var tb = root.querySelector('.toolbar'); if (tb) tb.style.background = c; }
     function applyDensity() { if (!gridApi) return; var h = config.density === 'compact' ? 28 : config.density === 'comfortable' ? 50 : 40; gridApi.setGridOption('rowHeight', h); gridApi.setGridOption('headerHeight', h); if (gridApi.resetRowHeights) gridApi.resetRowHeights(); }
     function applyZebra() { if (!config.zebra) gridEl.style.setProperty('--ag-odd-row-background-color', 'transparent'); else if (config.zebraColor) gridEl.style.setProperty('--ag-odd-row-background-color', config.zebraColor); else gridEl.style.removeProperty('--ag-odd-row-background-color'); }
-    function applyConfig() { renderHeader(); applyBackground(); applyDensity(); applyZebra(); FILTERS.forEach(updateFilterButton); if (gridApi) gridApi.setGridOption('columnDefs', colDefs()); }
+    function applyConfig() {
+      renderHeader(); applyBackground(); applyDensity(); applyZebra(); FILTERS.forEach(updateFilterButton);
+      if (gridApi) {
+        gridApi.setGridOption('columnDefs', colDefs());
+        if (config.sortField) gridApi.applyColumnState({ state: [{ colId: config.sortField, sort: (config.sortDir === 'desc' ? 'desc' : 'asc') }], defaultState: { sort: null } });
+        else gridApi.applyColumnState({ defaultState: { sort: null } });
+        recompute();
+      }
+    }
     function openConfigure() {
       var backdrop = el('div', { class: 'modal-backdrop' });
       var titleIn = el('input', { type: 'text', class: 'cfg-input' }); titleIn.value = config.title || '';
@@ -171,29 +181,59 @@
       var zebraIn = el('input', { type: 'text', class: 'cfg-input', placeholder: '#f6f8fb (optional)' }); zebraIn.value = config.zebraColor || '';
       var zebraSw = el('span', { class: 'cfg-swatch' }); function updZ() { zebraSw.style.background = (zebraIn.value.trim() || '#f6f8fb'); } zebraIn.addEventListener('input', updZ); updZ();
 
-      var labelInputs = {}, alignSel = {}, wrapChk = {}, fmtIn = {};
-      var colList = el('div', { class: 'cfg-cols' });
-      colList.appendChild(el('div', { class: 'cfg-colrow cfg-colhead' }, [el('span', { text: 'Field' }), el('span', { text: 'Label' }), el('span', { text: 'Align' }), el('span', { text: 'Wrap' }), el('span', { text: 'Number format' })]));
+      // default sort
+      var sortFieldSel = el('select', { class: 'cfg-input' }); sortFieldSel.appendChild(el('option', { value: '', text: '(none)' }));
+      orderedColumns().forEach(function (c) { var op = el('option', { value: c.field, text: labelFor(c.field) }); if (config.sortField === c.field) op.setAttribute('selected', 'selected'); sortFieldSel.appendChild(op); });
+      var sortDirSel = el('select', { class: 'cfg-input' }); [['asc', 'Ascending'], ['desc', 'Descending']].forEach(function (o) { var op = el('option', { value: o[0], text: o[1] }); if (config.sortDir === o[0]) op.setAttribute('selected', 'selected'); sortDirSel.appendChild(op); });
+
+      // totals
+      var totEnable = el('input', { type: 'checkbox' }); if (config.totals.enabled) totEnable.checked = true;
+      var totBold = el('input', { type: 'checkbox' }); if (config.totals.bold) totBold.checked = true;
+      var totPos = el('select', { class: 'cfg-input' }); [['bottom', 'Bottom'], ['top', 'Top']].forEach(function (o) { var op = el('option', { value: o[0], text: o[1] }); if (config.totals.position === o[0]) op.setAttribute('selected', 'selected'); totPos.appendChild(op); });
+      var totLabel = el('input', { type: 'text', class: 'cfg-input', placeholder: 'Total' }); totLabel.value = config.totals.label || '';
+      var totMeasChk = {}; var totMeasWrap = el('div', { class: 'cfg-measchk' });
+      measures.forEach(function (m) { var cb = el('input', { type: 'checkbox' }); cb.checked = (!config.totals.measures || config.totals.measures.indexOf(m) >= 0); totMeasChk[m] = cb; totMeasWrap.appendChild(el('label', { class: 'cfg-measitem' }, [cb, el('span', { text: labelFor(m) })])); });
+
+      // per-column: order / show / label / align / wrap / pin / format
+      var orderArr = orderedColumns().map(function (c) { return c.field; });
+      var labelInputs = {}, alignSel = {}, wrapChk = {}, fmtIn = {}, showChk = {}, pinSel = {};
       columns.forEach(function (c) {
-        var isMeas = measures.indexOf(c.field) >= 0;
-        var lab = el('input', { type: 'text', class: 'cfg-input', placeholder: c.field }); lab.value = config.labels[c.field] || ''; labelInputs[c.field] = lab;
-        var al = el('select', { class: 'cfg-input' }); [['', 'Auto'], ['left', 'Left'], ['center', 'Centre'], ['right', 'Right']].forEach(function (o) { var op = el('option', { value: o[0], text: o[1] }); if ((config.align[c.field] || '') === o[0]) op.setAttribute('selected', 'selected'); al.appendChild(op); }); alignSel[c.field] = al;
-        var wr = el('input', { type: 'checkbox' }); if (config.wrap[c.field]) wr.checked = true; wrapChk[c.field] = wr;
-        var fm = el('input', { type: 'text', class: 'cfg-input', placeholder: isMeas ? '#,##0.00' : '' }); fm.value = config.numFmt[c.field] || ''; if (!isMeas) fm.disabled = true; fmtIn[c.field] = fm;
-        colList.appendChild(el('div', { class: 'cfg-colrow' }, [el('span', { class: 'cfg-fieldname', text: c.field }), lab, al, wr, fm]));
+        var f = c.field, isMeas = measures.indexOf(f) >= 0;
+        var lab = el('input', { type: 'text', class: 'cfg-input', placeholder: f }); lab.value = config.labels[f] || ''; labelInputs[f] = lab;
+        var al = el('select', { class: 'cfg-input' }); [['', 'Auto'], ['left', 'Left'], ['center', 'Centre'], ['right', 'Right']].forEach(function (o) { var op = el('option', { value: o[0], text: o[1] }); if ((config.align[f] || '') === o[0]) op.setAttribute('selected', 'selected'); al.appendChild(op); }); alignSel[f] = al;
+        var wr = el('input', { type: 'checkbox' }); if (config.wrap[f]) wr.checked = true; wrapChk[f] = wr;
+        var pn = el('select', { class: 'cfg-input' }); [['', 'None'], ['left', 'Left'], ['right', 'Right']].forEach(function (o) { var op = el('option', { value: o[0], text: o[1] }); if ((config.pin[f] || '') === o[0]) op.setAttribute('selected', 'selected'); pn.appendChild(op); }); pinSel[f] = pn;
+        var fm = el('input', { type: 'text', class: 'cfg-input', placeholder: isMeas ? '#,##0.00' : '' }); fm.value = config.numFmt[f] || ''; if (!isMeas) fm.disabled = true; fmtIn[f] = fm;
+        var sh = el('input', { type: 'checkbox' }); if (!config.hidden[f]) sh.checked = true; showChk[f] = sh;
       });
+      var colList = el('div', { class: 'cfg-cols' });
+      function renderColList() {
+        colList.textContent = '';
+        colList.appendChild(el('div', { class: 'cfg-colrow cfg-colrow8 cfg-colhead' }, [el('span', { text: '' }), el('span', { text: 'Show' }), el('span', { text: 'Field' }), el('span', { text: 'Label' }), el('span', { text: 'Align' }), el('span', { text: 'Wrap' }), el('span', { text: 'Pin' }), el('span', { text: 'Format' })]));
+        orderArr.forEach(function (f, idx) {
+          var up = el('button', { class: 'cfg-ord', type: 'button', text: '↑' }); up.addEventListener('click', function () { if (idx > 0) { var t = orderArr[idx - 1]; orderArr[idx - 1] = f; orderArr[idx] = t; renderColList(); } });
+          var dn = el('button', { class: 'cfg-ord', type: 'button', text: '↓' }); dn.addEventListener('click', function () { if (idx < orderArr.length - 1) { var t = orderArr[idx + 1]; orderArr[idx + 1] = f; orderArr[idx] = t; renderColList(); } });
+          colList.appendChild(el('div', { class: 'cfg-colrow cfg-colrow8' }, [el('span', { class: 'cfg-ordwrap' }, [up, dn]), showChk[f], el('span', { class: 'cfg-fieldname', text: f }), labelInputs[f], alignSel[f], wrapChk[f], pinSel[f], fmtIn[f]]));
+        });
+      }
+      renderColList();
+
       var saveB = el('button', { class: 'btn primary', type: 'button', text: 'Save' });
       var cancelB = el('button', { class: 'btn', type: 'button', text: 'Cancel' });
       saveB.addEventListener('click', function () {
         config.title = titleIn.value; config.subtitle = subIn.value; config.showHeader = !!showHdr.checked; config.bgColor = bgIn.value.trim();
         config.density = densitySel.value; config.zebra = !!zebraChk.checked; config.zebraColor = zebraIn.value.trim();
-        config.labels = {}; config.align = {}; config.wrap = {}; config.numFmt = {};
-        columns.forEach(function (c) {
-          var f = c.field;
+        config.sortField = sortFieldSel.value; config.sortDir = sortDirSel.value;
+        config.totals = { enabled: !!totEnable.checked, bold: !!totBold.checked, position: totPos.value, label: totLabel.value.trim(), measures: measures.filter(function (m) { return totMeasChk[m].checked; }) };
+        config.order = orderArr.slice();
+        config.labels = {}; config.align = {}; config.wrap = {}; config.numFmt = {}; config.hidden = {}; config.pin = {};
+        orderArr.forEach(function (f) {
           var lv = labelInputs[f].value.trim(); if (lv) config.labels[f] = lv;
           var av = alignSel[f].value; if (av) config.align[f] = av;
           if (wrapChk[f].checked) config.wrap[f] = true;
           var fv = fmtIn[f].value.trim(); if (fv) config.numFmt[f] = fv;
+          if (!showChk[f].checked) config.hidden[f] = true;
+          var pv = pinSel[f].value; if (pv) config.pin[f] = pv;
         });
         saveConfig(config); applyConfig(); statusEl.textContent = 'Configuration saved ✓'; document.body.removeChild(backdrop);
       });
@@ -208,7 +248,14 @@
           el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Row density' }), densitySel]),
           el('label', { class: 'cfg-row cfg-check' }, [zebraChk, el('span', { text: 'Zebra striping' })]),
           el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Zebra colour' }), zebraIn, zebraSw]),
-          el('div', { class: 'cfg-sec', text: 'Columns (format strings like "£"#,##0.00;[Red]-"£"#,##0.00)' }),
+          el('div', { class: 'cfg-sec', text: 'Default sort' }),
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Sort by' }), sortFieldSel, sortDirSel]),
+          el('div', { class: 'cfg-sec', text: 'Totals' }),
+          el('label', { class: 'cfg-row cfg-check' }, [totEnable, el('span', { text: 'Show totals row' })]),
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Position / style' }), totPos, el('label', { class: 'cfg-check' }, [totBold, el('span', { text: 'Bold' })])]),
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Label' }), totLabel]),
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Total columns' }), totMeasWrap]),
+          el('div', { class: 'cfg-sec', text: 'Columns — reorder (↑↓), show, label, align, wrap, pin, format' }),
           colList
         ]),
         el('div', { class: 'modal-foot' }, [cancelB, saveB])
@@ -220,34 +267,46 @@
     var gridEl = el('div', { class: 'grid ag-theme-quartz' });
     root.appendChild(gridEl);
 
+    function orderedColumns() {
+      var byField = {}; columns.forEach(function (c) { byField[c.field] = c; });
+      var out = [], seen = {};
+      (config.order || []).forEach(function (f) { if (byField[f] && !seen[f]) { out.push(byField[f]); seen[f] = true; } });
+      columns.forEach(function (c) { if (!seen[c.field]) out.push(c); });
+      return out;
+    }
     function colDefs() {
-      return columns.map(function (c) {
+      return orderedColumns().map(function (c) {
         var field = c.field, isMeas = measures.indexOf(field) >= 0;
         var align = config.align[field] || (isMeas ? 'right' : 'left');
         var wrap = !!config.wrap[field];
-        var d = { colId: field, headerName: labelFor(field), field: field, wrapText: wrap, autoHeight: wrap, headerClass: 'hdr-' + align };
+        var d = { colId: field, headerName: labelFor(field), field: field, wrapText: wrap, autoHeight: wrap, headerClass: 'hdr-' + align, hide: !!config.hidden[field] };
+        if (config.pin[field] === 'left' || config.pin[field] === 'right') d.pinned = config.pin[field];
+        if (config.sortField === field) d.sort = (config.sortDir === 'desc' ? 'desc' : 'asc');
         if (isMeas) { d.type = 'numericColumn'; d.filter = 'agNumberColumnFilter'; d.valueFormatter = function (p) { return fmtMeasure(config, field, p.value); }; }
         d.cellStyle = function (p) {
           var st = { textAlign: align, whiteSpace: wrap ? 'normal' : 'nowrap' };
-          if (p.node && p.node.rowPinned) st.fontWeight = '700';
+          if (p.node && p.node.rowPinned && config.totals.bold) st.fontWeight = '700';
           if (isMeas) { var f = config.numFmt[field]; if (f && /\[red\]/i.test(f) && typeof p.value === 'number' && p.value < 0) st.color = '#b00020'; }
           return st;
         };
         return d;
       });
     }
+    function totalMeasures() { var t = config.totals; return (t.measures && t.measures.length) ? t.measures.filter(function (m) { return measures.indexOf(m) >= 0; }) : measures; }
     function recompute() {
       if (!gridApi) return;
       var sums = {}; measures.forEach(function (m) { sums[m] = 0; });
       var n = 0;
-      gridApi.forEachNodeAfterFilter(function (node) { n++; measures.forEach(function (m) { var v = node.data[m]; if (typeof v === 'number') sums[m] += v; }); });
-      if (measures.length) {
+      gridApi.forEachNodeAfterFilter(function (node) { if (node.rowPinned) return; n++; measures.forEach(function (m) { var v = node.data[m]; if (typeof v === 'number') sums[m] += v; }); });
+      var tmeas = totalMeasures();
+      if (config.totals.enabled && tmeas.length) {
         var vis = gridApi.getColumnState().filter(function (c) { return !c.hide; });
         var label = vis.length ? vis[0].colId : firstField;
-        var pinned = {}; if (measures.indexOf(label) < 0) pinned[label] = 'Total';
-        measures.forEach(function (m) { pinned[m] = sums[m]; });
-        gridApi.setGridOption('pinnedBottomRowData', [pinned]);
-      }
+        var pinned = {}; if (measures.indexOf(label) < 0) pinned[label] = (config.totals.label || 'Total');
+        tmeas.forEach(function (m) { pinned[m] = sums[m]; });
+        if (config.totals.position === 'top') { gridApi.setGridOption('pinnedTopRowData', [pinned]); gridApi.setGridOption('pinnedBottomRowData', []); }
+        else { gridApi.setGridOption('pinnedBottomRowData', [pinned]); gridApi.setGridOption('pinnedTopRowData', []); }
+      } else { gridApi.setGridOption('pinnedBottomRowData', []); gridApi.setGridOption('pinnedTopRowData', []); }
       metaEl.textContent = (n === rows.length) ? (rows.length + ' Total rows') : ('Showing ' + n + ' of ' + rows.length + ' rows');
     }
 
@@ -256,7 +315,7 @@
       defaultColDef: { sortable: true, filter: true, resizable: true },
       autoSizeStrategy: { type: 'fitCellContents' },
       suppressDragLeaveHidesColumns: true, enableCellTextSelection: true,
-      getRowStyle: function (p) { if (p.node.rowPinned) return { fontWeight: '700' }; },
+      getRowStyle: function (p) { if (p.node.rowPinned && config.totals.bold) return { fontWeight: '700' }; },
       isExternalFilterPresent: function () { return FILTERS.some(function (f) { return active[f] && active[f].size; }); },
       doesExternalFilterPass: function (node) { for (var i = 0; i < FILTERS.length; i++) { var f = FILTERS[i], s = active[f]; if (s && s.size && !s.has(norm(node.data[f]))) return false; } return true; },
       onGridReady: function () { gridApi.onFilterChanged(); restoreSaved(); },
