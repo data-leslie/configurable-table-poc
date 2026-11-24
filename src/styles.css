@@ -36,6 +36,8 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Se
 .filter-foot .spacer { flex: 1; }
 .filter-foot button { font: inherit; font-size: 0.78rem; padding: 0.3rem 0.55rem; border: 1px solid var(--line); background: #fff; border-radius: 6px; cursor: pointer; }
 .filter-foot button.apply { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.filter-rangewrap { display: flex; gap: 0.4rem; margin-bottom: 0.4rem; }
+.filter-range { flex: 1; min-width: 0; box-sizing: border-box; font: inherit; font-size: 0.82rem; padding: 0.35rem 0.45rem; border: 1px solid var(--line); border-radius: 6px; }
 
 /* toolbar */
 .toolbar { flex: 0 0 auto; padding: 0.55rem 1rem; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
@@ -49,7 +51,7 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Se
 .meta { font-size: 0.82rem; color: var(--ink); font-weight: 600; white-space: nowrap; }
 .status { font-size: 0.78rem; color: #1a7f37; }
 /* search + action buttons pinned to the right of the toolbar */
-.toolbar .quick-search { margin-left: auto; }
+.toolbar .tb-spacer { flex: 1 1 auto; }
 
 .btn { font: inherit; font-size: 0.85rem; padding: 0.4rem 0.75rem; border: 1px solid var(--line); background: #fff; border-radius: 6px; cursor: pointer; color: var(--ink); white-space: nowrap; }
 .btn:hover { background: #f4f6fb; border-color: #c9d4ef; }
@@ -105,6 +107,9 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Se
 .cfg-ord:hover { background: #f4f6fb; border-color: #c9d4ef; }
 .cfg-measchk { flex: 1; display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; }
 .cfg-measitem { display: flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; }
+.cfg-fltrow { display: grid; grid-template-columns: 1.4fr 48px 1.3fr 90px 56px; gap: 0.4rem; align-items: center; padding: 0.22rem 0; }
+.cfg-fltrow.cfg-colhead { font-weight: 600; font-size: 0.72rem; color: var(--muted); position: sticky; top: 0; background: #fff; }
+.cfg-fltrow .cfg-input { min-width: 0; }
 /* header text alignment driven by per-column config */
 .ag-header-cell.hdr-right .ag-header-cell-label { justify-content: flex-end; }
 .ag-header-cell.hdr-center .ag-header-cell-label { justify-content: center; }

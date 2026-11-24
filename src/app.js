@@ -32,16 +32,29 @@
   function renderError(msg) { root.textContent = ''; root.appendChild(el('div', { class: 'error', text: msg })); }
 
   // --- configuration (set by an editor; stored in the workbook; read by all) --
-  function defaultConfig() { return { title: 'Configurable Table', subtitle: '', showHeader: true, bgColor: '', labels: {}, density: 'standard', zebra: true, zebraColor: '', align: {}, wrap: {}, numFmt: {}, order: [], hidden: {}, pin: {}, sortField: '', sortDir: 'asc', totals: { enabled: true, measures: null, bold: true, position: 'bottom', label: 'Total' } }; }
+  function defaultConfig() {
+    return {
+      title: 'Configurable Table', subtitle: '', showHeader: true, bgColor: '',
+      labels: {}, density: 'standard', zebra: true, zebraColor: '',
+      align: {}, wrap: {}, numFmt: {}, order: [], hidden: {}, pin: {},
+      sortField: '', sortDir: 'asc',
+      totals: { enabled: true, measures: null, bold: true, position: 'bottom', label: 'Total' },
+      // filters
+      filterType: {}, filterSort: {}, filterDefault: {}, filterHidden: {}, cascade: true, applyButton: true,
+      // interaction
+      exports: { csv: true, excel: true, pdf: true }, fileName: 'Table', fileStamp: false, saveView: true, quickSearch: true
+    };
+  }
   function loadConfig() {
     var raw = null;
     try { if (window.tableau && tableau.extensions && tableau.extensions.settings) raw = tableau.extensions.settings.get('tableConfig'); } catch (e) {}
     if (raw == null) { try { raw = localStorage.getItem('cfgtbl-poc:config'); } catch (e) {} }
     var cfg = defaultConfig();
     if (raw) { try { var o = JSON.parse(raw); Object.keys(o).forEach(function (k) { cfg[k] = o[k]; }); } catch (e) {} }
-    ['labels', 'align', 'wrap', 'numFmt', 'hidden', 'pin'].forEach(function (k) { if (!cfg[k] || typeof cfg[k] !== 'object') cfg[k] = {}; });
+    ['labels', 'align', 'wrap', 'numFmt', 'hidden', 'pin', 'filterType', 'filterSort', 'filterDefault', 'filterHidden'].forEach(function (k) { if (!cfg[k] || typeof cfg[k] !== 'object') cfg[k] = {}; });
     if (!Array.isArray(cfg.order)) cfg.order = [];
     if (!cfg.totals || typeof cfg.totals !== 'object') cfg.totals = defaultConfig().totals;
+    if (!cfg.exports || typeof cfg.exports !== 'object') cfg.exports = defaultConfig().exports;
     return cfg;
   }
   // Format a number with an Excel-style format string (via SheetJS SSF), e.g. "£"#,##0.00;-"£"#,##0.00
@@ -108,14 +121,48 @@
     var config = loadConfig();
     function labelFor(f) { return (config.labels && config.labels[f]) || f; }
 
-    function valuesFor(field, respectSelf) {
-      var out = {};
-      rows.forEach(function (r) {
-        for (var i = 0; i < FILTERS.length; i++) { var f = FILTERS[i]; if (f === field && !respectSelf) continue; var s = active[f]; if (s && s.size && !s.has(norm(r[f]))) return; }
-        out[norm(r[field])] = true;
-      });
-      return Object.keys(out).sort(function (a, b) { var na = parseFloat(a), nb = parseFloat(b); if (!isNaN(na) && !isNaN(nb)) return na - nb; return a.localeCompare(b); });
+    // A filter value in `active` is one of: a Set (membership), {kind:'search',q}, {kind:'range',min,max}, {kind:'date',from,to}
+    function filterActive(a) { if (!a) return false; if (a instanceof Set) return a.size > 0; if (a.kind === 'search') return !!a.q; if (a.kind === 'range') return a.min != null || a.max != null; if (a.kind === 'date') return !!a.from || !!a.to; return false; }
+    function rowPasses(field, val) {
+      var a = active[field]; if (!filterActive(a)) return true; var s = norm(val);
+      if (a instanceof Set) return a.has(s);
+      if (a.kind === 'search') return s.toLowerCase().indexOf(a.q.toLowerCase()) >= 0;
+      if (a.kind === 'range') { var n = parseFloat(s); if (isNaN(n)) return false; if (a.min != null && n < a.min) return false; if (a.max != null && n > a.max) return false; return true; }
+      if (a.kind === 'date') { var d = Date.parse(s); if (isNaN(d)) return false; if (a.from && d < Date.parse(a.from)) return false; if (a.to && d > Date.parse(a.to) + 86399999) return false; return true; }
+      return true;
     }
+    var optCounts = {};
+    function valuesFor(field) {
+      var counts = {};
+      rows.forEach(function (r) {
+        if (config.cascade !== false) { for (var i = 0; i < FILTERS.length; i++) { var f = FILTERS[i]; if (f === field) continue; if (!rowPasses(f, r[f])) return; } }
+        var k = norm(r[field]); counts[k] = (counts[k] || 0) + 1;
+      });
+      optCounts[field] = counts;
+      var keys = Object.keys(counts), sort = (config.filterSort && config.filterSort[field]) || 'az';
+      keys.sort(function (a, b) {
+        var na = parseFloat(a), nb = parseFloat(b), bothNum = !isNaN(na) && !isNaN(nb);
+        if (sort === 'count') return (counts[b] - counts[a]) || (bothNum ? na - nb : a.localeCompare(b));
+        if (sort === 'za') return bothNum ? nb - na : b.localeCompare(a);
+        return bothNum ? na - nb : a.localeCompare(b);
+      });
+      return keys;
+    }
+    function rawValues(field) { var o = {}; rows.forEach(function (r) { o[norm(r[field])] = true; }); return Object.keys(o); }
+    function latestOf(vals) {
+      if (!vals.length) return null;
+      var nums = vals.map(parseFloat); if (nums.every(function (n) { return !isNaN(n); })) { var mi = 0; for (var i = 1; i < nums.length; i++) if (nums[i] > nums[mi]) mi = i; return vals[mi]; }
+      var dates = vals.map(Date.parse); if (dates.every(function (d) { return !isNaN(d); })) { var di = 0; for (var j = 1; j < dates.length; j++) if (dates[j] > dates[di]) di = j; return vals[di]; }
+      return vals.slice().sort()[vals.length - 1];
+    }
+    function initDefaults() {
+      FILTERS.forEach(function (f) {
+        var d = config.filterDefault && config.filterDefault[f]; if (!d) return;
+        if (d === 'latest') { var mx = latestOf(rawValues(f)); if (mx != null) active[f] = new Set([mx]); }
+        else if (Array.isArray(d) && d.length) { active[f] = new Set(d.map(norm)); }
+      });
+    }
+    initDefaults();
 
     // header (configurable: title, subtitle, or hidden entirely)
     function renderHeader() {
@@ -130,7 +177,7 @@
     // filter bar (one per dimension; wraps over rows)
     var filterBar = el('div', { class: 'filterbar' });
     root.appendChild(filterBar);
-    FILTERS.forEach(function (f) { filterBar.appendChild(makeFilter(f)); });
+    FILTERS.forEach(function (f) { if (config.filterHidden && config.filterHidden[f]) return; filterBar.appendChild(makeFilter(f)); });
     var clearAll = el('button', { class: 'linkbtn', type: 'button', text: 'Clear all filters' });
     clearAll.addEventListener('click', function () { active = {}; FILTERS.forEach(updateFilterButton); gridApi.onFilterChanged(); });
     filterBar.appendChild(clearAll);
@@ -142,16 +189,23 @@
     var colBtn = el('button', { class: 'btn', text: 'Columns ▾', type: 'button' });
     var colPanel = el('div', { class: 'menu', hidden: 'hidden' });
     var colWrap = el('div', { class: 'menu-wrap' }, [colBtn, colPanel]);
+    var exp = config.exports || {}; var anyExp = (exp.csv !== false) || (exp.excel !== false) || (exp.pdf !== false);
     var dlBtn = el('button', { class: 'btn', text: 'Download ▾', type: 'button' });
     var dlPanel = el('div', { class: 'menu', hidden: 'hidden' });
     var dlCsv = el('button', { class: 'menu-item', type: 'button', text: 'CSV' });
     var dlXlsx = el('button', { class: 'menu-item', type: 'button', text: 'Excel (.xlsx)' });
     var dlPdf = el('button', { class: 'menu-item', type: 'button', text: 'PDF' });
-    dlPanel.appendChild(dlCsv); dlPanel.appendChild(dlXlsx); dlPanel.appendChild(dlPdf);
+    if (exp.csv !== false) dlPanel.appendChild(dlCsv);
+    if (exp.excel !== false) dlPanel.appendChild(dlXlsx);
+    if (exp.pdf !== false) dlPanel.appendChild(dlPdf);
     var dlWrap = el('div', { class: 'menu-wrap' }, [dlBtn, dlPanel]);
     var saveBtn = el('button', { class: 'btn primary', text: 'Save view', type: 'button' });
     var resetBtn = el('button', { class: 'btn', text: 'Reset', type: 'button' });
-    var toolbarKids = [metaEl, statusEl, searchInput, colWrap, dlWrap, saveBtn, resetBtn];
+    var toolbarKids = [metaEl, statusEl, el('span', { class: 'tb-spacer' })];
+    if (config.quickSearch !== false) toolbarKids.push(searchInput);
+    toolbarKids.push(colWrap);
+    if (anyExp) toolbarKids.push(dlWrap);
+    if (config.saveView !== false) { toolbarKids.push(saveBtn); toolbarKids.push(resetBtn); }
     if (showConfigure()) { var configBtn = el('button', { class: 'btn', type: 'button', text: '⚙ Configure' }); configBtn.addEventListener('click', openConfigure); toolbarKids.push(configBtn); }
     root.appendChild(el('div', { class: 'toolbar' }, toolbarKids));
 
@@ -218,6 +272,29 @@
       }
       renderColList();
 
+      // filters (dimensions only)
+      var cascadeChk = el('input', { type: 'checkbox' }); if (config.cascade !== false) cascadeChk.checked = true;
+      var applyChk = el('input', { type: 'checkbox' }); if (config.applyButton !== false) applyChk.checked = true;
+      var fltShow = {}, fltType = {}, fltSort = {}, fltLatest = {};
+      var fltList = el('div', { class: 'cfg-cols' });
+      fltList.appendChild(el('div', { class: 'cfg-fltrow cfg-colhead' }, [el('span', { text: 'Field' }), el('span', { text: 'Show' }), el('span', { text: 'Type' }), el('span', { text: 'Sort' }), el('span', { text: 'Latest' })]));
+      FILTERS.forEach(function (f) {
+        var sh = el('input', { type: 'checkbox' }); if (!config.filterHidden[f]) sh.checked = true; fltShow[f] = sh;
+        var ty = el('select', { class: 'cfg-input' }); [['multi', 'Multi-select'], ['single', 'Single-select'], ['search', 'Search'], ['range', 'Range'], ['date', 'Date range']].forEach(function (o) { var op = el('option', { value: o[0], text: o[1] }); if ((config.filterType[f] || 'multi') === o[0]) op.setAttribute('selected', 'selected'); ty.appendChild(op); }); fltType[f] = ty;
+        var so = el('select', { class: 'cfg-input' }); [['az', 'A–Z'], ['za', 'Z–A'], ['count', 'Count']].forEach(function (o) { var op = el('option', { value: o[0], text: o[1] }); if ((config.filterSort[f] || 'az') === o[0]) op.setAttribute('selected', 'selected'); so.appendChild(op); }); fltSort[f] = so;
+        var la = el('input', { type: 'checkbox' }); if (config.filterDefault[f] === 'latest') la.checked = true; fltLatest[f] = la;
+        fltList.appendChild(el('div', { class: 'cfg-fltrow' }, [el('span', { class: 'cfg-fieldname', text: f }), sh, ty, so, la]));
+      });
+
+      // interaction
+      var expCsv = el('input', { type: 'checkbox' }); if (!config.exports || config.exports.csv !== false) expCsv.checked = true;
+      var expXlsx = el('input', { type: 'checkbox' }); if (!config.exports || config.exports.excel !== false) expXlsx.checked = true;
+      var expPdf = el('input', { type: 'checkbox' }); if (!config.exports || config.exports.pdf !== false) expPdf.checked = true;
+      var fnameIn = el('input', { type: 'text', class: 'cfg-input', placeholder: 'Table' }); fnameIn.value = config.fileName || '';
+      var fstampChk = el('input', { type: 'checkbox' }); if (config.fileStamp) fstampChk.checked = true;
+      var saveViewChk = el('input', { type: 'checkbox' }); if (config.saveView !== false) saveViewChk.checked = true;
+      var qsChk = el('input', { type: 'checkbox' }); if (config.quickSearch !== false) qsChk.checked = true;
+
       var saveB = el('button', { class: 'btn primary', type: 'button', text: 'Save' });
       var cancelB = el('button', { class: 'btn', type: 'button', text: 'Cancel' });
       saveB.addEventListener('click', function () {
@@ -235,7 +312,18 @@
           if (!showChk[f].checked) config.hidden[f] = true;
           var pv = pinSel[f].value; if (pv) config.pin[f] = pv;
         });
-        saveConfig(config); applyConfig(); statusEl.textContent = 'Configuration saved ✓'; document.body.removeChild(backdrop);
+        config.cascade = !!cascadeChk.checked; config.applyButton = !!applyChk.checked;
+        config.filterHidden = {}; config.filterType = {}; config.filterSort = {}; config.filterDefault = {};
+        FILTERS.forEach(function (f) {
+          if (!fltShow[f].checked) config.filterHidden[f] = true;
+          if (fltType[f].value !== 'multi') config.filterType[f] = fltType[f].value;
+          if (fltSort[f].value !== 'az') config.filterSort[f] = fltSort[f].value;
+          if (fltLatest[f].checked) config.filterDefault[f] = 'latest';
+        });
+        config.exports = { csv: !!expCsv.checked, excel: !!expXlsx.checked, pdf: !!expPdf.checked };
+        config.fileName = fnameIn.value.trim() || 'Table'; config.fileStamp = !!fstampChk.checked;
+        config.saveView = !!saveViewChk.checked; config.quickSearch = !!qsChk.checked;
+        saveConfig(config); document.body.removeChild(backdrop); build({ columns: columns, rows: rows });
       });
       cancelB.addEventListener('click', function () { document.body.removeChild(backdrop); });
       backdrop.appendChild(el('div', { class: 'modal cfg-modal' }, [
@@ -256,7 +344,17 @@
           el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Label' }), totLabel]),
           el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Total columns' }), totMeasWrap]),
           el('div', { class: 'cfg-sec', text: 'Columns — reorder (↑↓), show, label, align, wrap, pin, format' }),
-          colList
+          colList,
+          el('div', { class: 'cfg-sec', text: 'Filters — show, type, sort, default' }),
+          el('label', { class: 'cfg-row cfg-check' }, [cascadeChk, el('span', { text: 'Cascade filters (options reflect other selections)' })]),
+          el('label', { class: 'cfg-row cfg-check' }, [applyChk, el('span', { text: 'Show Apply button (off = filter as you click)' })]),
+          fltList,
+          el('div', { class: 'cfg-sec', text: 'Interaction' }),
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Export buttons' }), el('label', { class: 'cfg-check' }, [expCsv, el('span', { text: 'CSV' })]), el('label', { class: 'cfg-check' }, [expXlsx, el('span', { text: 'Excel' })]), el('label', { class: 'cfg-check' }, [expPdf, el('span', { text: 'PDF' })])]),
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Download filename' }), fnameIn]),
+          el('label', { class: 'cfg-row cfg-check' }, [fstampChk, el('span', { text: 'Append date/time to filename' })]),
+          el('label', { class: 'cfg-row cfg-check' }, [saveViewChk, el('span', { text: 'Show “Save view” + Reset buttons' })]),
+          el('label', { class: 'cfg-row cfg-check' }, [qsChk, el('span', { text: 'Show quick-search box' })])
         ]),
         el('div', { class: 'modal-foot' }, [cancelB, saveB])
       ]));
@@ -310,18 +408,20 @@
       metaEl.textContent = (n === rows.length) ? (rows.length + ' Total rows') : ('Showing ' + n + ' of ' + rows.length + ' rows');
     }
 
+    if (CURRENT.gridApi) { try { CURRENT.gridApi.destroy(); } catch (e) {} CURRENT.gridApi = null; }
     gridApi = agGrid.createGrid(gridEl, {
       columnDefs: colDefs(), rowData: rows,
       defaultColDef: { sortable: true, filter: true, resizable: true },
       autoSizeStrategy: { type: 'fitCellContents' },
       suppressDragLeaveHidesColumns: true, enableCellTextSelection: true,
       getRowStyle: function (p) { if (p.node.rowPinned && config.totals.bold) return { fontWeight: '700' }; },
-      isExternalFilterPresent: function () { return FILTERS.some(function (f) { return active[f] && active[f].size; }); },
-      doesExternalFilterPass: function (node) { for (var i = 0; i < FILTERS.length; i++) { var f = FILTERS[i], s = active[f]; if (s && s.size && !s.has(norm(node.data[f]))) return false; } return true; },
+      isExternalFilterPresent: function () { return FILTERS.some(function (f) { return filterActive(active[f]); }); },
+      doesExternalFilterPass: function (node) { for (var i = 0; i < FILTERS.length; i++) { if (!rowPasses(FILTERS[i], node.data[FILTERS[i]])) return false; } return true; },
       onGridReady: function () { gridApi.onFilterChanged(); restoreSaved(); },
       onFilterChanged: recompute, onColumnVisible: recompute,
       onColumnMoved: function (e) { if (e.finished) recompute(); }
     });
+    CURRENT.gridApi = gridApi;
     FILTERS.forEach(updateFilterButton);
 
     // columns menu
@@ -336,6 +436,11 @@
     colBtn.addEventListener('click', function (ev) { ev.stopPropagation(); var open = colPanel.hasAttribute('hidden'); closeAllMenus(); if (open) { rebuildCols(); colPanel.removeAttribute('hidden'); } });
     dlBtn.addEventListener('click', function (ev) { ev.stopPropagation(); var open = dlPanel.hasAttribute('hidden'); closeAllMenus(); if (open) dlPanel.removeAttribute('hidden'); });
 
+    function exportName(ext) {
+      var base = (config.fileName || 'Table');
+      if (config.fileStamp) { var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; }; base += '_' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' + p(d.getHours()) + p(d.getMinutes()); }
+      return base + '.' + ext;
+    }
     function currentView(raw) {
       var cols = gridApi.getColumnState().filter(function (c) { return !c.hide; });
       var headers = cols.map(function (c) { return labelFor(c.colId); });
@@ -353,20 +458,20 @@
       var v = currentView(true), esc = function (s) { s = (s == null ? '' : String(s)); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
       var lines = [v.headers.map(esc).join(',')]; v.body.forEach(function (r) { lines.push(r.map(esc).join(',')); });
       if (measures.length) lines.push(v.total.map(esc).join(','));
-      downloadBlob('Table.csv', '﻿' + lines.join('\r\n'), 'text/csv;charset=utf-8;'); statusEl.textContent = 'CSV downloaded ✓';
+      downloadBlob(exportName('csv'), '﻿' + lines.join('\r\n'), 'text/csv;charset=utf-8;'); statusEl.textContent = 'CSV downloaded ✓';
     });
     dlXlsx.addEventListener('click', function () {
       dlPanel.setAttribute('hidden', 'hidden');
       if (!window.XLSX) { statusEl.textContent = 'Excel library missing'; return; }
       var v = currentView(true), aoa = [v.headers].concat(v.body); if (measures.length) aoa.push(v.total);
       var ws = XLSX.utils.aoa_to_sheet(aoa), wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Table'); XLSX.writeFile(wb, 'Table.xlsx'); statusEl.textContent = 'Excel downloaded ✓';
+      XLSX.utils.book_append_sheet(wb, ws, 'Table'); XLSX.writeFile(wb, exportName('xlsx')); statusEl.textContent = 'Excel downloaded ✓';
     });
     dlPdf.addEventListener('click', function () {
       dlPanel.setAttribute('hidden', 'hidden');
       if (!window.jspdf || !window.jspdf.jsPDF) { statusEl.textContent = 'PDF library missing'; return; }
       var v = currentView(false), doc = new window.jspdf.jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
-      doc.setFontSize(13); doc.text('Table', 24, 26); doc.setFontSize(8); doc.setTextColor(120); doc.text(v.body.length + ' rows', 24, 40);
+      doc.setFontSize(13); doc.text(config.title || 'Table', 24, 26); doc.setFontSize(8); doc.setTextColor(120); doc.text(v.body.length + ' rows', 24, 40);
       doc.autoTable({ head: [v.headers], body: v.body, foot: measures.length ? [v.total] : undefined, startY: 50, styles: { fontSize: 7, cellPadding: 2, overflow: 'linebreak' }, headStyles: { fillColor: [74, 74, 74], textColor: 255 }, footStyles: { fillColor: [235, 235, 235], textColor: 20, fontStyle: 'bold' }, margin: { left: 18, right: 18 } });
       doc.save('Table.pdf'); statusEl.textContent = 'PDF downloaded ✓';
     });
@@ -381,25 +486,76 @@
     // live refresh when the worksheet's data changes (native filters etc.)
     CURRENT.setData = function (m) { rows = m.rows.slice(); gridApi.setGridOption('rowData', rows); FILTERS.forEach(updateFilterButton); recompute(); };
 
-    // ---- filter dropdown ----
+    // ---- filter dropdown (type-aware: multi / single / search / range / date) ----
     function makeFilter(field) {
+      var type = (config.filterType && config.filterType[field]) || 'multi';
+      var immediate = (config.applyButton === false);
       var btn = el('button', { class: 'filterbtn', type: 'button' }); btn._field = field; updateBtn(btn, field, 0);
       var panel = el('div', { class: 'filter-panel', hidden: 'hidden' });
       var wrap = el('div', { class: 'filter-wrap' }, [btn, panel]);
+
+      if (type === 'search') {
+        var sIn = el('input', { class: 'filter-search', type: 'text', placeholder: 'Contains…' });
+        var sApply = el('button', { class: 'apply', type: 'button', text: 'Apply' }), sClear = el('button', { type: 'button', text: 'Clear' });
+        var commitSearch = function () { var q = sIn.value.trim(); if (q) active[field] = { kind: 'search', q: q }; else delete active[field]; updateFilterButton(field); gridApi.onFilterChanged(); };
+        var sFoot = [sClear, el('span', { class: 'spacer' })]; if (!immediate) sFoot.push(sApply);
+        panel.appendChild(sIn); panel.appendChild(el('div', { class: 'filter-foot' }, sFoot));
+        sApply.addEventListener('click', function () { commitSearch(); panel.setAttribute('hidden', 'hidden'); });
+        sClear.addEventListener('click', function () { sIn.value = ''; commitSearch(); });
+        if (immediate) sIn.addEventListener('input', commitSearch);
+        btn.addEventListener('click', function (ev) { ev.stopPropagation(); if (panel.hasAttribute('hidden')) { closeAllMenus(); var a = active[field]; sIn.value = (a && a.kind === 'search') ? a.q : ''; panel.removeAttribute('hidden'); sIn.focus(); } else panel.setAttribute('hidden', 'hidden'); });
+        return wrap;
+      }
+
+      if (type === 'range' || type === 'date') {
+        var isDate = (type === 'date');
+        var inA = el('input', { class: 'filter-range', type: isDate ? 'date' : 'number', placeholder: 'From' });
+        var inB = el('input', { class: 'filter-range', type: isDate ? 'date' : 'number', placeholder: 'To' });
+        var rApply = el('button', { class: 'apply', type: 'button', text: 'Apply' }), rClear = el('button', { type: 'button', text: 'Clear' });
+        var commitRange = function () {
+          if (isDate) { if (inA.value || inB.value) active[field] = { kind: 'date', from: inA.value, to: inB.value }; else delete active[field]; }
+          else { var mn = inA.value === '' ? null : parseFloat(inA.value), mx = inB.value === '' ? null : parseFloat(inB.value); if (mn != null || mx != null) active[field] = { kind: 'range', min: mn, max: mx }; else delete active[field]; }
+          updateFilterButton(field); gridApi.onFilterChanged();
+        };
+        var rFoot = [rClear, el('span', { class: 'spacer' })]; if (!immediate) rFoot.push(rApply);
+        panel.appendChild(el('div', { class: 'filter-rangewrap' }, [inA, inB]));
+        panel.appendChild(el('div', { class: 'filter-foot' }, rFoot));
+        rApply.addEventListener('click', function () { commitRange(); panel.setAttribute('hidden', 'hidden'); });
+        rClear.addEventListener('click', function () { inA.value = ''; inB.value = ''; commitRange(); });
+        if (immediate) { inA.addEventListener('change', commitRange); inB.addEventListener('change', commitRange); }
+        btn.addEventListener('click', function (ev) { ev.stopPropagation(); if (panel.hasAttribute('hidden')) { closeAllMenus(); var a = active[field]; if (a && a.kind === 'date') { inA.value = a.from || ''; inB.value = a.to || ''; } else if (a && a.kind === 'range') { inA.value = a.min == null ? '' : a.min; inB.value = a.max == null ? '' : a.max; } panel.removeAttribute('hidden'); } else panel.setAttribute('hidden', 'hidden'); });
+        return wrap;
+      }
+
+      // multi / single (checkbox or radio list)
+      var single = (type === 'single');
       var pending = new Set();
       var search = el('input', { class: 'filter-search', type: 'text', placeholder: 'Search…' });
       var list = el('div', { class: 'filter-list' });
       var fa = el('button', { type: 'button', text: 'All' }), fc = el('button', { type: 'button', text: 'Clear' }), fap = el('button', { class: 'apply', type: 'button', text: 'Apply' });
-      panel.appendChild(search); panel.appendChild(list); panel.appendChild(el('div', { class: 'filter-foot' }, [fa, fc, el('span', { class: 'spacer' }), fap]));
-      function render() { list.textContent = ''; var q = search.value.trim().toLowerCase(); valuesFor(field, false).forEach(function (val) { if (q && val.toLowerCase().indexOf(q) === -1) return; var cb = el('input', { type: 'checkbox' }); cb.checked = pending.has(val); cb.addEventListener('change', function () { if (cb.checked) pending.add(val); else pending['delete'](val); }); list.appendChild(el('label', { class: 'filter-opt' }, [cb, el('span', { text: val === '' ? '(blank)' : val })])); }); }
-      btn.addEventListener('click', function (ev) { ev.stopPropagation(); if (panel.hasAttribute('hidden')) { closeAllMenus(); var cur = active[field]; pending = new Set(cur && cur.size ? Array.from(cur) : valuesFor(field, false)); search.value = ''; render(); panel.removeAttribute('hidden'); } else panel.setAttribute('hidden', 'hidden'); });
+      var commit = function () { var all = valuesFor(field); if (pending.size === 0 || (!single && pending.size === all.length)) delete active[field]; else active[field] = new Set(pending); updateFilterButton(field); gridApi.onFilterChanged(); };
+      function render() {
+        list.textContent = ''; var q = search.value.trim().toLowerCase();
+        valuesFor(field).forEach(function (val) {
+          if (q && val.toLowerCase().indexOf(q) === -1) return;
+          var inp = el('input', single ? { type: 'radio', name: 'flt-' + field } : { type: 'checkbox' }); inp.checked = pending.has(val);
+          inp.addEventListener('change', function () { if (single) pending = new Set([val]); else { if (inp.checked) pending.add(val); else pending['delete'](val); } if (immediate) { commit(); if (single) panel.setAttribute('hidden', 'hidden'); } });
+          var cnt = (config.filterSort && config.filterSort[field] === 'count' && optCounts[field]) ? optCounts[field][val] : null;
+          list.appendChild(el('label', { class: 'filter-opt' }, [inp, el('span', { text: (val === '' ? '(blank)' : val) + (cnt ? '  (' + cnt + ')' : '') })]));
+        });
+      }
+      panel.appendChild(search); panel.appendChild(list);
+      var foot = [fa, fc, el('span', { class: 'spacer' })]; if (!immediate) foot.push(fap);
+      panel.appendChild(el('div', { class: 'filter-foot' }, foot));
+      btn.addEventListener('click', function (ev) { ev.stopPropagation(); if (panel.hasAttribute('hidden')) { closeAllMenus(); var cur = active[field]; pending = new Set(cur instanceof Set ? Array.from(cur) : (single ? [] : valuesFor(field))); search.value = ''; render(); panel.removeAttribute('hidden'); } else panel.setAttribute('hidden', 'hidden'); });
       search.addEventListener('input', render);
-      fa.addEventListener('click', function () { pending = new Set(valuesFor(field, false)); render(); });
-      fc.addEventListener('click', function () { pending = new Set(); render(); });
-      fap.addEventListener('click', function () { var all = valuesFor(field, false); if (pending.size === 0 || pending.size === all.length) delete active[field]; else active[field] = new Set(pending); updateFilterButton(field); panel.setAttribute('hidden', 'hidden'); gridApi.onFilterChanged(); });
+      fa.addEventListener('click', function () { pending = new Set(valuesFor(field)); render(); if (immediate) commit(); });
+      fc.addEventListener('click', function () { pending = new Set(); render(); if (immediate) commit(); });
+      fap.addEventListener('click', function () { commit(); panel.setAttribute('hidden', 'hidden'); });
       return wrap;
     }
-    function updateFilterButton(field) { filterBar.querySelectorAll('.filterbtn').forEach(function (b) { if (b._field === field) updateBtn(b, field, active[field] ? active[field].size : 0); }); }
+    function filterCount(field) { var a = active[field]; if (!filterActive(a)) return 0; return (a instanceof Set) ? a.size : 1; }
+    function updateFilterButton(field) { filterBar.querySelectorAll('.filterbtn').forEach(function (b) { if (b._field === field) updateBtn(b, field, filterCount(field)); }); }
     function updateBtn(btn, field, count) { btn._field = field; btn.textContent = labelFor(field) + (count ? ' (' + count + ') ▾' : ' ▾'); btn.className = 'filterbtn' + (count ? ' on' : ''); }
 
     applyBackground(); applyDensity(); applyZebra();
