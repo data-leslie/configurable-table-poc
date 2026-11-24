@@ -429,7 +429,12 @@
         // In Tableau: DON'T show fake data — show a friendly request-access message.
         renderError('You don’t currently have permission to view this table. Please request access to this dashboard and its data source from your Tableau administrator, then reload.');
       });
-    }).catch(function (err) { renderError('Extension failed to initialize: ' + ((err && err.message) || err)); });
+    }).catch(function (err) {
+      var msg = (err && err.message) || String(err);
+      // Opened directly in a browser (no Tableau host iframe): show a fictional-data preview.
+      if (window.self === window.top || /iframe|desktop|popup/i.test(msg)) { build(sampleModel()); return; }
+      renderError('Extension failed to initialize: ' + msg);
+    });
   }
   boot();
 })();
