@@ -96,6 +96,7 @@
     var firstField = columns.length ? columns[0].field : '';
     var gridApi, active = {};
     var config = loadConfig();
+    function labelFor(f) { return (config.labels && config.labels[f]) || f; }
 
     function valuesFor(field, respectSelf) {
       var out = {};
@@ -144,12 +145,17 @@
     if (showConfigure()) { var configBtn = el('button', { class: 'btn', type: 'button', text: '⚙ Configure' }); configBtn.addEventListener('click', openConfigure); toolbarKids.push(configBtn); }
     root.appendChild(el('div', { class: 'toolbar' }, toolbarKids));
 
-    function applyConfig() { renderHeader(); if (gridApi) gridApi.setGridOption('columnDefs', colDefs()); }
+    function applyBackground() { var c = config.bgColor || ''; root.style.background = c; var fb = root.querySelector('.filterbar'); if (fb) fb.style.background = c; var tb = root.querySelector('.toolbar'); if (tb) tb.style.background = c; }
+    function applyConfig() { renderHeader(); applyBackground(); FILTERS.forEach(updateFilterButton); if (gridApi) gridApi.setGridOption('columnDefs', colDefs()); }
     function openConfigure() {
       var backdrop = el('div', { class: 'modal-backdrop' });
       var titleIn = el('input', { type: 'text', class: 'cfg-input' }); titleIn.value = config.title || '';
       var subIn = el('input', { type: 'text', class: 'cfg-input' }); subIn.value = config.subtitle || '';
       var showHdr = el('input', { type: 'checkbox' }); if (config.showHeader) showHdr.checked = true;
+      var bgIn = el('input', { type: 'text', class: 'cfg-input', placeholder: '#ffffff (blank = default)' }); bgIn.value = config.bgColor || '';
+      var bgSwatch = el('span', { class: 'cfg-swatch' });
+      function updSwatch() { bgSwatch.style.background = (bgIn.value.trim() || '#ffffff'); }
+      bgIn.addEventListener('input', updSwatch); updSwatch();
       var labelInputs = {};
       var colList = el('div', { class: 'cfg-cols' });
       columns.forEach(function (c) {
@@ -160,7 +166,7 @@
       var saveB = el('button', { class: 'btn primary', type: 'button', text: 'Save' });
       var cancelB = el('button', { class: 'btn', type: 'button', text: 'Cancel' });
       saveB.addEventListener('click', function () {
-        config.title = titleIn.value; config.subtitle = subIn.value; config.showHeader = !!showHdr.checked;
+        config.title = titleIn.value; config.subtitle = subIn.value; config.showHeader = !!showHdr.checked; config.bgColor = bgIn.value.trim();
         config.labels = {}; Object.keys(labelInputs).forEach(function (f) { var v = labelInputs[f].value.trim(); if (v) config.labels[f] = v; });
         saveConfig(config); applyConfig(); statusEl.textContent = 'Configuration saved ✓'; document.body.removeChild(backdrop);
       });
@@ -171,6 +177,7 @@
           el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Title' }), titleIn]),
           el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Subtitle' }), subIn]),
           el('label', { class: 'cfg-row cfg-check' }, [showHdr, el('span', { text: 'Show header (title + subtitle)' })]),
+          el('div', { class: 'cfg-row' }, [el('span', { class: 'cfg-field', text: 'Background colour' }), bgIn, bgSwatch]),
           el('div', { class: 'cfg-sec', text: 'Column labels (blank = use the field name)' }),
           colList
         ]),
@@ -233,7 +240,7 @@
 
     function currentView(raw) {
       var cols = gridApi.getColumnState().filter(function (c) { return !c.hide; });
-      var headers = cols.map(function (c) { return c.colId; });
+      var headers = cols.map(function (c) { return labelFor(c.colId); });
       var numeric = cols.map(function (c) { return measures.indexOf(c.colId) >= 0; });
       var sums = {}; measures.forEach(function (m) { sums[m] = 0; });
       var body = [];
@@ -295,8 +302,9 @@
       return wrap;
     }
     function updateFilterButton(field) { filterBar.querySelectorAll('.filterbtn').forEach(function (b) { if (b._field === field) updateBtn(b, field, active[field] ? active[field].size : 0); }); }
-    function updateBtn(btn, field, count) { btn._field = field; btn.textContent = field + (count ? ' (' + count + ') ▾' : ' ▾'); btn.className = 'filterbtn' + (count ? ' on' : ''); }
+    function updateBtn(btn, field, count) { btn._field = field; btn.textContent = labelFor(field) + (count ? ' (' + count + ') ▾' : ' ▾'); btn.className = 'filterbtn' + (count ? ' on' : ''); }
 
+    applyBackground();
     recompute();
   }
 
